@@ -1,5 +1,5 @@
 const DICT_KEY = 'realtimeJaEn.dictionary.v2';
-const ROWS_KEY = 'realtimeJaEn.rows.v3';
+const ROWS_KEY = 'realtimeJaEn.rows.v4';
 const WORKER_KEY = 'realtimeJaEn.workerUrl.v1';
 const MODE_KEY = 'realtimeJaEn.inputMode.v1';
 const DEFAULT_DICT = [{ reading: 'たかえ', word: '貴恵' }];
@@ -177,23 +177,35 @@ function commitLiveRow(){
   liveInput=''; liveOutput=''; liveInterim='';
   renderRows(); scrollLatest(); updateLanguageUi();
 }
-function scheduleFallbackCommit(delay=1600){
-  clearTimeout(commitTimer);
-  commitTimer=setTimeout(commitLiveRow,delay);
+function sentenceCompleteness(text){
+  const s=String(text||'').trim();
+  if(!s) return 'unknown';
+  // 明確な文末記号は強い確定材料。
+  if(/[。！？!?]$/.test(s)) return 'complete';
+  if(inputMode==='en' && /[.!?]$/.test(s)) return 'complete';
+
+  // 日本語で、ここで切ると不自然になりやすい語尾。次の断片を待つ。
+  if(inputMode==='ja' && /(?:は|が|を|に|で|と|も|へ|の|や|から|まで|より|ので|けど|けれど|し|て|で|なって|して|されて|できて|ほしく|欲しく|ところ|場合|ため|よう|こと|もの|という|として|について|に対して|によって)$/u.test(s)) return 'incomplete';
+
+  // 一般的な日本語の文末表現。句点がなくても文章として成立している可能性が高い。
+  if(inputMode==='ja' && /(?:です|ます|でした|ました|ません|でしょう|だ|だった|ない|ある|いる|ください|思います|思う|なります|なった|できます|できる|ですか|ますか|ですよ|ですね|だよ|だね|かな|でしょうか)$/u.test(s)) return 'complete';
+
+  return 'unknown';
 }
-function scheduleTurnCommit(delay=450){
+function schedulePhraseCommit(){
+  clearTimeout(commitTimer);
   clearTimeout(turnCommitTimer);
-  turnCommitTimer=setTimeout(commitLiveRow,delay);
+  // Geminiの短いspeech turnをそのまま行にせず、文として成立しそうかも加味して待ち時間を変える。
+  const source=(liveInput||liveInterim||'').trim();
+  const state=sentenceCompleteness(source);
+  const delay=state==='complete' ? 1200 : state==='incomplete' ? 2800 : 2100;
+  commitTimer=setTimeout(commitLiveRow,delay);
 }
 function setFinalInputTranscript(text){
   const next=String(text||'').trim();
   if(!next) return;
-  if(liveInput && next!==liveInput && !next.startsWith(liveInput) && !liveInput.startsWith(next)){
-    // A second finalized input transcript means the previous utterance has ended.
-    // Commit it instead of concatenating separate utterances into one row.
-    commitLiveRow();
-  }
-  if(!liveInput || next.length>=liveInput.length || next.startsWith(liveInput)) liveInput=next;
+  // Geminiが一つの文章を複数turnに分けても、ここでは文章バッファへ連結する。
+  liveInput=joinTranscript(liveInput,next);
 }
 
 function friendlyError(err){
@@ -249,9 +261,9 @@ function buildSetup(){
       automaticActivityDetection:{
         disabled:false,
         startOfSpeechSensitivity:'START_SENSITIVITY_HIGH',
-        endOfSpeechSensitivity:'END_SENSITIVITY_HIGH',
-        prefixPaddingMs:200,
-        silenceDurationMs:650
+        endOfSpeechSensitivity:'END_SENSITIVITY_LOW',
+        prefixPaddingMs:250,
+        silenceDurationMs:1100
       },
       activityHandling:'NO_INTERRUPTION'
     }
@@ -294,31 +306,29 @@ function handleServerMessage(data){
   const sc=data.serverContent;
   if(sc){
     if(sc.interimInputTranscription?.text){
-      // If a previous finalized utterance is still waiting for a boundary,
-      // a new interim transcript is a strong signal that the next utterance started.
-      if(liveInput && liveOutput && !turnCommitTimer) commitLiveRow();
+      // 話し続けている間は確定タイマーを止める。短い間で行を切らない。
+      clearTimeout(commitTimer); commitTimer=null;
+      clearTimeout(turnCommitTimer); turnCommitTimer=null;
       liveInterim=sc.interimInputTranscription.text.trim();
       els.interim.textContent=liveInterim || `${inputMode==='ja'?'日本語':'英語'}を聞き取り中…`;
       renderRows(); scrollLatest();
     }
     if(sc.inputTranscription?.text){
-      // inputTranscription is the finalized authoritative transcript for a speech turn.
-      // Do not concatenate separate finalized turns.
       setFinalInputTranscript(sc.inputTranscription.text);
       liveInterim='';
       els.interim.textContent=liveInput;
       renderRows(); scrollLatest();
-      // Fallback only. Normally turnComplete below determines the row boundary.
-      scheduleFallbackCommit(1600);
+      schedulePhraseCommit();
     }
     if(sc.outputTranscription?.text){
       liveOutput=joinTranscript(liveOutput,sc.outputTranscription.text);
       renderRows(); scrollLatest();
+      schedulePhraseCommit();
     }
     if(sc.turnComplete){
-      // Output transcription is normally complete by turnComplete. Wait briefly because
-      // input transcription may be delivered independently and slightly out of order.
-      scheduleTurnCommit(450);
+      // turnCompleteはGemini内部の音声turn境界。表の行境界とはみなさない。
+      // 文末らしさ + 実際の無音時間を見て確定する。
+      schedulePhraseCommit();
     }
   }
   if(data.goAway){
