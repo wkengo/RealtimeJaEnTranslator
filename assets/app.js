@@ -1,5 +1,5 @@
 const DICT_KEY = 'realtimeJaEn.dictionary.v2';
-const ROWS_KEY = 'realtimeJaEn.rows.v1';
+const ROWS_KEY = 'realtimeJaEn.rows.v3';
 const WORKER_KEY = 'realtimeJaEn.workerUrl.v1';
 const MODE_KEY = 'realtimeJaEn.inputMode.v1';
 const DEFAULT_DICT = [{ reading: 'たかえ', word: '貴恵' }];
@@ -40,6 +40,7 @@ let liveOutput = '';
 let liveInterim = '';
 let contextText = '';
 let commitTimer = null;
+let turnCommitTimer = null;
 
 function loadArray(key, fallback){
   try { const v = JSON.parse(localStorage.getItem(key)); return Array.isArray(v) ? v : fallback; } catch { return fallback; }
@@ -167,6 +168,7 @@ function updateLanguageUi(){
 
 function commitLiveRow(){
   clearTimeout(commitTimer); commitTimer=null;
+  clearTimeout(turnCommitTimer); turnCommitTimer=null;
   const src=(liveInput||liveInterim||'').trim();
   const dst=(liveOutput||'').trim();
   if(!src && !dst) return;
@@ -175,7 +177,24 @@ function commitLiveRow(){
   liveInput=''; liveOutput=''; liveInterim='';
   renderRows(); scrollLatest(); updateLanguageUi();
 }
-function scheduleCommit(delay=850){ clearTimeout(commitTimer); commitTimer=setTimeout(commitLiveRow,delay); }
+function scheduleFallbackCommit(delay=1600){
+  clearTimeout(commitTimer);
+  commitTimer=setTimeout(commitLiveRow,delay);
+}
+function scheduleTurnCommit(delay=450){
+  clearTimeout(turnCommitTimer);
+  turnCommitTimer=setTimeout(commitLiveRow,delay);
+}
+function setFinalInputTranscript(text){
+  const next=String(text||'').trim();
+  if(!next) return;
+  if(liveInput && next!==liveInput && !next.startsWith(liveInput) && !liveInput.startsWith(next)){
+    // A second finalized input transcript means the previous utterance has ended.
+    // Commit it instead of concatenating separate utterances into one row.
+    commitLiveRow();
+  }
+  if(!liveInput || next.length>=liveInput.length || next.startsWith(liveInput)) liveInput=next;
+}
 
 function friendlyError(err){
   const status=err?.status || 0;
@@ -226,7 +245,16 @@ function buildSetup(){
     generationConfig:{responseModalities:['AUDIO'],translationConfig:{targetLanguageCode:targetCode,echoTargetLanguage:false}},
     inputAudioTranscription,
     outputAudioTranscription:{languageCodes:[targetCode]},
-    realtimeInputConfig:{activityHandling:'NO_INTERRUPTION'}
+    realtimeInputConfig:{
+      automaticActivityDetection:{
+        disabled:false,
+        startOfSpeechSensitivity:'START_SENSITIVITY_HIGH',
+        endOfSpeechSensitivity:'END_SENSITIVITY_HIGH',
+        prefixPaddingMs:200,
+        silenceDurationMs:650
+      },
+      activityHandling:'NO_INTERRUPTION'
+    }
   };
 }
 
@@ -266,22 +294,32 @@ function handleServerMessage(data){
   const sc=data.serverContent;
   if(sc){
     if(sc.interimInputTranscription?.text){
-      if(commitTimer && liveInput && liveOutput) commitLiveRow();
+      // If a previous finalized utterance is still waiting for a boundary,
+      // a new interim transcript is a strong signal that the next utterance started.
+      if(liveInput && liveOutput && !turnCommitTimer) commitLiveRow();
       liveInterim=sc.interimInputTranscription.text.trim();
       els.interim.textContent=liveInterim || `${inputMode==='ja'?'日本語':'英語'}を聞き取り中…`;
       renderRows(); scrollLatest();
     }
     if(sc.inputTranscription?.text){
-      liveInput=joinTranscript(liveInput,sc.inputTranscription.text);
+      // inputTranscription is the finalized authoritative transcript for a speech turn.
+      // Do not concatenate separate finalized turns.
+      setFinalInputTranscript(sc.inputTranscription.text);
       liveInterim='';
       els.interim.textContent=liveInput;
-      renderRows(); scrollLatest(); scheduleCommit(1100);
+      renderRows(); scrollLatest();
+      // Fallback only. Normally turnComplete below determines the row boundary.
+      scheduleFallbackCommit(1600);
     }
     if(sc.outputTranscription?.text){
       liveOutput=joinTranscript(liveOutput,sc.outputTranscription.text);
-      renderRows(); scrollLatest(); scheduleCommit(700);
+      renderRows(); scrollLatest();
     }
-    if(sc.turnComplete || sc.generationComplete) scheduleCommit(sc.turnComplete?250:500);
+    if(sc.turnComplete){
+      // Output transcription is normally complete by turnComplete. Wait briefly because
+      // input transcription may be delivered independently and slightly out of order.
+      scheduleTurnCommit(450);
+    }
   }
   if(data.goAway){
     setStatus('接続を更新しています…');
@@ -401,7 +439,7 @@ async function start(){
   }
 }
 async function stop(showStatus=true){
-  running=false; deliberateStop=true; clearTimeout(rotateTimer); clearTimeout(reconnectTimer); clearTimeout(commitTimer);
+  running=false; deliberateStop=true; clearTimeout(rotateTimer); clearTimeout(reconnectTimer); clearTimeout(commitTimer); clearTimeout(turnCommitTimer);
   if(liveInput||liveOutput) commitLiveRow();
   if(websocket?.readyState===WebSocket.OPEN){ try{websocket.send(JSON.stringify({realtimeInput:{audioStreamEnd:true}}));}catch{} }
   try{websocket?.close(1000,'user stop');}catch{} websocket=null; setupReady=false;

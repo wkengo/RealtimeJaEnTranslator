@@ -15,11 +15,6 @@ function cors(origin){
 function json(data,status,origin){
   return new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8',...cors(origin),'Cache-Control':'no-store'}});
 }
-function safeVocabulary(value){
-  if(!Array.isArray(value)) return [];
-  return [...new Set(value.map(v=>String(v).trim()).filter(Boolean))].slice(0,100).map(v=>v.slice(0,100));
-}
-
 export default {
   async fetch(request, env) {
     const origin=request.headers.get('Origin')||'';
@@ -33,28 +28,17 @@ export default {
     if(url.pathname!=='/token' || request.method!=='POST') return json({message:'Not found'},404,origin);
     if(!env.GEMINI_API_KEY) return json({message:'WorkerにGEMINI_API_KEYが設定されていません。',code:'API_KEY_MISSING'},500,origin);
 
-    let body={};
-    try{ body=await request.json(); }catch{ return json({message:'リクエスト形式が正しくありません。'},400,origin); }
-    const mode=body.mode==='en'?'en':'ja';
-    const sourceCode=mode==='ja'?'ja-JP':'en-US';
-    const targetCode=mode==='ja'?'en':'ja';
-    const vocabulary=safeVocabulary(body.vocabulary);
-    const smart=body.smart!==false;
-    const inputAudioTranscription={languageCodes:[sourceCode],mode:smart?'SMART':'VERBATIM'};
-    if(vocabulary.length) inputAudioTranscription.customVocabulary=vocabulary;
-    const setup={
-      model:MODEL,
-      generationConfig:{responseModalities:['AUDIO'],translationConfig:{targetLanguageCode:targetCode,echoTargetLanguage:false}},
-      inputAudioTranscription,
-      outputAudioTranscription:{languageCodes:[targetCode]},
-      realtimeInputConfig:{activityHandling:'NO_INTERRUPTION'}
-    };
+    // Keep the token constrained to the Live Translate model, but let the web app
+    // provide language, dictionary and VAD settings. This avoids silently ignoring
+    // client-side setup changes when an ephemeral token is used.
+    try{ await request.json(); }catch{}
     const now=Date.now();
     const tokenRequest={
       uses:1,
       expireTime:new Date(now+20*60*1000).toISOString(),
       newSessionExpireTime:new Date(now+2*60*1000).toISOString(),
-      bidiGenerateContentSetup:setup
+      fieldMask:'model',
+      bidiGenerateContentSetup:{model:MODEL}
     };
 
     let upstream;
@@ -76,6 +60,6 @@ export default {
       return json({message,code:`UPSTREAM_${upstream.status}`},upstream.status,origin);
     }
     if(!data.name) return json({message:'Geminiから有効なトークンを取得できませんでした。'},502,origin);
-    return json({token:data.name,model:MODEL,mode,expireTime:data.expireTime||tokenRequest.expireTime},200,origin);
+    return json({token:data.name,model:MODEL,expireTime:data.expireTime||tokenRequest.expireTime},200,origin);
   }
 };
