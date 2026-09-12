@@ -17,11 +17,13 @@
   <div id="app">
     <header class="toolbar">
       <button id="btnStart" class="primary">開始</button>
+      <button id="btnLanguage" class="languageBtn" title="入力する言語を切り替えます">日本語</button>
       <button id="btnLatest">最新へ</button>
       <button id="btnCopyAll">全文コピー</button>
       <button id="btnSaveCsv">CSV保存</button>
       <button id="btnClear">クリア</button>
       <button id="btnDictionary">単語辞書</button>
+      <button id="btnSettings">接続設定</button>
       <label class="check"><input id="chkFiller" type="checkbox" checked> フィラー除去</label>
       <span class="spacer"></span>
       <span id="status" class="status">待機中</span>
@@ -44,7 +46,7 @@
     </main>
 
     <footer class="footer">
-      <span id="engineInfo">音声認識：ブラウザ / 翻訳：Gemini</span>
+      <span id="engineInfo">音声認識・翻訳：Gemini 3.5 Live Translate</span>
       <span id="rowCount">0 行</span>
     </footer>
   </div>
@@ -73,6 +75,26 @@
           <thead><tr><th>よみがな</th><th>表記</th><th></th></tr></thead>
           <tbody id="dictBody"></tbody>
         </table>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="settingsDialog">
+    <form method="dialog" class="settingsPanel">
+      <div class="dictHeader">
+        <strong>接続設定</strong>
+        <span class="dictHint">Cloudflare Worker のURLを端末内に保存します</span>
+        <button value="cancel" class="closeBtn" aria-label="閉じる">×</button>
+      </div>
+      <div class="settingsBody">
+        <label for="workerUrl">Cloudflare Worker URL</label>
+        <input id="workerUrl" type="url" inputmode="url" placeholder="https://xxxxx.workers.dev">
+        <div class="settingsHint">末尾の / はあってもなくても構いません。Gemini APIキーはここには入力しません。</div>
+      </div>
+      <div class="settingsActions">
+        <button type="button" id="btnTestWorker">接続テスト</button>
+        <span class="spacer"></span>
+        <button type="button" id="btnSaveSettings" class="primary">保存</button>
       </div>
     </form>
   </dialog>
