@@ -4,6 +4,8 @@ const WORKER_KEY = 'realtimeJaEn.workerUrl.v1';
 const MODE_KEY = 'realtimeJaEn.inputMode.v1';
 const DEFAULT_DICT = [{ reading: 'たかえ', word: '貴恵' }];
 const MODEL = 'gemini-3.5-live-translate-preview';
+const DEFAULT_WORKER_URL = 'https://realtime-ja-en-token.wkengog.workers.dev';
+const PUBLIC_APP_URL = 'https://wkengo.github.io/RealtimeJaEnTranslator/';
 const WS_ENDPOINT = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained';
 const ROTATE_MS = 8 * 60 * 1000 + 30 * 1000;
 
@@ -17,7 +19,7 @@ const els = {
 
 let dictionary = loadArray(DICT_KEY, loadArray('realtimeJaEn.dictionary.v1', DEFAULT_DICT));
 let rows = loadArray(ROWS_KEY, []);
-let workerUrl = localStorage.getItem(WORKER_KEY) || '';
+let workerUrl = localStorage.getItem(WORKER_KEY) || DEFAULT_WORKER_URL;
 let inputMode = localStorage.getItem(MODE_KEY) === 'en' ? 'en' : 'ja';
 let running = false;
 let deliberateStop = false;
@@ -122,8 +124,36 @@ function joinTranscript(base, next){
   base=(base||'').trim(); next=(next||'').trim(); if(!next) return base; if(!base) return next;
   if(next.startsWith(base)) return next;
   if(base.endsWith(next)) return base;
-  const spacer=/[A-Za-z0-9]$/.test(base) && /^[A-Za-z0-9]/.test(next) ? ' ' : '';
+  const spacer=/[A-Za-z0-9.!?]$/.test(base) && /^[A-Za-z0-9]/.test(next) ? ' ' : '';
   return base + spacer + next;
+}
+function normalizeEnglish(text){
+  return String(text||'').replace(/([.!?])(?=[A-Za-z])/g,'$1 ').replace(/\s{2,}/g,' ').trim();
+}
+function splitSentences(text){
+  const s=String(text||'').trim();
+  if(!s) return [];
+  const parts=s.match(/[^。！？.!?]+(?:[。！？.!?]+|$)/g);
+  return (parts||[s]).map(v=>v.trim()).filter(Boolean);
+}
+function appendCommittedRows(src,dst){
+  let japanese='', english='';
+  if(inputMode==='ja'){
+    japanese=postProcessJapanese(src);
+    english=normalizeEnglish(dst);
+  }else{
+    japanese=postProcessJapanese(dst);
+    english=normalizeEnglish(src);
+  }
+  const jaParts=splitSentences(japanese);
+  const enParts=splitSentences(english);
+  if(jaParts.length>1 && jaParts.length===enParts.length){
+    for(let i=0;i<jaParts.length;i++){
+      rows.push({id:crypto.randomUUID?crypto.randomUUID():`${Date.now()}_${Math.random()}_${i}`, japanese:jaParts[i], english:enParts[i]});
+    }
+  }else if(japanese || english){
+    rows.push({id:crypto.randomUUID?crypto.randomUUID():`${Date.now()}_${Math.random()}`, japanese, english});
+  }
 }
 
 function updateLanguageUi(){
@@ -140,22 +170,12 @@ function commitLiveRow(){
   const src=(liveInput||liveInterim||'').trim();
   const dst=(liveOutput||'').trim();
   if(!src && !dst) return;
-  let japanese='', english='';
-  if(inputMode==='ja'){
-    japanese=postProcessJapanese(src);
-    english=dst;
-  }else{
-    japanese=postProcessJapanese(dst);
-    english=src;
-  }
-  if(japanese || english){
-    rows.push({id:crypto.randomUUID?crypto.randomUUID():`${Date.now()}_${Math.random()}`, japanese, english});
-    saveRows();
-  }
+  appendCommittedRows(src,dst);
+  saveRows();
   liveInput=''; liveOutput=''; liveInterim='';
   renderRows(); scrollLatest(); updateLanguageUi();
 }
-function scheduleCommit(delay=350){ clearTimeout(commitTimer); commitTimer=setTimeout(commitLiveRow,delay); }
+function scheduleCommit(delay=850){ clearTimeout(commitTimer); commitTimer=setTimeout(commitLiveRow,delay); }
 
 function friendlyError(err){
   const status=err?.status || 0;
@@ -171,7 +191,7 @@ function friendlyError(err){
   return '翻訳サービスへ接続できませんでした。少し待ってからもう一度お試しください。';
 }
 
-function normalizedWorkerUrl(){ return workerUrl.trim().replace(/\/+$/,''); }
+function normalizedWorkerUrl(){ return (workerUrl || DEFAULT_WORKER_URL).trim().replace(/\/+$/,''); }
 async function fetchToken(){
   const base=normalizedWorkerUrl();
   if(!base) throw Object.assign(new Error('Worker URL未設定'),{code:'WORKER_URL'});
@@ -246,6 +266,7 @@ function handleServerMessage(data){
   const sc=data.serverContent;
   if(sc){
     if(sc.interimInputTranscription?.text){
+      if(commitTimer && liveInput && liveOutput) commitLiveRow();
       liveInterim=sc.interimInputTranscription.text.trim();
       els.interim.textContent=liveInterim || `${inputMode==='ja'?'日本語':'英語'}を聞き取り中…`;
       renderRows(); scrollLatest();
@@ -254,13 +275,13 @@ function handleServerMessage(data){
       liveInput=joinTranscript(liveInput,sc.inputTranscription.text);
       liveInterim='';
       els.interim.textContent=liveInput;
-      renderRows(); scrollLatest(); if(commitTimer) scheduleCommit(650);
+      renderRows(); scrollLatest(); scheduleCommit(1100);
     }
     if(sc.outputTranscription?.text){
       liveOutput=joinTranscript(liveOutput,sc.outputTranscription.text);
-      renderRows(); scrollLatest(); if(commitTimer) scheduleCommit(650);
+      renderRows(); scrollLatest(); scheduleCommit(700);
     }
-    if(sc.turnComplete || sc.generationComplete) scheduleCommit(sc.turnComplete?650:800);
+    if(sc.turnComplete || sc.generationComplete) scheduleCommit(sc.turnComplete?250:500);
   }
   if(data.goAway){
     setStatus('接続を更新しています…');
@@ -363,6 +384,11 @@ function updateStartUi(){
   if(!running) updateLanguageUi();
 }
 async function start(){
+  if(location.protocol==='file:'){
+    setStatus('ローカルファイルでは翻訳できないため、GitHub Pagesを開きます…');
+    window.location.href=PUBLIC_APP_URL;
+    return;
+  }
   if(running){ await stop(); return; }
   if(!navigator.mediaDevices?.getUserMedia){ setStatus('このブラウザではマイクを利用できません。',true); return; }
   if(!normalizedWorkerUrl()){ openSettings(); setStatus('先にCloudflare Worker URLを設定してください。',true); return; }
@@ -457,10 +483,10 @@ els.dictFile.addEventListener('change',async e=>{
   if(running){toast('辞書の変更は次回の接続から音声認識に反映されます',2600);}
 });
 
-function openSettings(){ els.workerUrl.value=workerUrl; els.settingsDialog.showModal(); }
+function openSettings(){ els.workerUrl.value=workerUrl || DEFAULT_WORKER_URL; els.settingsDialog.showModal(); }
 els.settings.addEventListener('click',openSettings);
 els.saveSettings.addEventListener('click',()=>{
-  workerUrl=els.workerUrl.value.trim().replace(/\/+$/,''); localStorage.setItem(WORKER_KEY,workerUrl); els.settingsDialog.close(); toast('接続設定を保存しました'); setStatus('待機中');
+  workerUrl=els.workerUrl.value.trim().replace(/\/+$/,'') || DEFAULT_WORKER_URL; localStorage.setItem(WORKER_KEY,workerUrl); els.settingsDialog.close(); toast('接続設定を保存しました'); setStatus('待機中');
 });
 els.testWorker.addEventListener('click',async()=>{
   const url=els.workerUrl.value.trim().replace(/\/+$/,''); if(!url){toast('Worker URLを入力してください');return;}
@@ -476,3 +502,4 @@ els.testWorker.addEventListener('click',async()=>{
 window.addEventListener('beforeunload',()=>{try{websocket?.close();}catch{}});
 if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 updateLanguageUi();renderRows();
+if(location.protocol==='file:') setStatus('ローカル表示です。「開始」を押すとGitHub Pagesを開きます。');
