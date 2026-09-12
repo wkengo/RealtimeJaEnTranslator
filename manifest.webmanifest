@@ -1,0 +1,16 @@
+{
+  "name": "リアルタイム日英翻訳",
+  "short_name": "日英翻訳",
+  "description": "日本語音声を文章単位で英語へ翻訳し、日英対比で記録します。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "orientation": "any",
+  "icons": [
+    {"src":"./assets/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"},
+    {"src":"./assets/icon-180.png","sizes":"180x180","type":"image/png"},
+    {"src":"./assets/icon-512.png","sizes":"512x512","type":"image/png"}
+  ]
+}

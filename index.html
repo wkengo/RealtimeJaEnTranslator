@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="日英翻訳">
+  <title>リアルタイム日英翻訳</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./assets/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./assets/icon-180.png">
+  <link rel="stylesheet" href="./assets/styles.css">
+</head>
+<body>
+  <div id="app">
+    <header class="toolbar">
+      <button id="btnStart" class="primary">開始</button>
+      <button id="btnLatest">最新へ</button>
+      <button id="btnCopyAll">全文コピー</button>
+      <button id="btnSaveCsv">CSV保存</button>
+      <button id="btnClear">クリア</button>
+      <button id="btnDictionary">単語辞書</button>
+      <label class="check"><input id="chkFiller" type="checkbox" checked> フィラー除去</label>
+      <span class="spacer"></span>
+      <span id="status" class="status">待機中</span>
+    </header>
+
+    <section class="meterRow" aria-label="マイク状態">
+      <span class="meterLabel">マイク</span>
+      <div class="meterTrack"><div id="meterBar" class="meterBar"></div></div>
+      <span id="meterValue" class="meterValue">0%</span>
+      <span id="interim" class="interim">ここに認識中の日本語が表示されます</span>
+    </section>
+
+    <main id="tableWrap" class="tableWrap">
+      <table id="resultTable">
+        <colgroup><col class="colJa"><col class="colEn"></colgroup>
+        <thead><tr><th>日本語</th><th>English</th></tr></thead>
+        <tbody id="resultBody"></tbody>
+      </table>
+      <div id="emptyState" class="emptyState">「開始」を押して日本語で話してください。</div>
+    </main>
+
+    <footer class="footer">
+      <span id="engineInfo">音声認識：ブラウザ / 翻訳：Gemini</span>
+      <span id="rowCount">0 行</span>
+    </footer>
+  </div>
+
+  <div id="contextMenu" class="contextMenu" hidden>
+    <button id="ctxCopy">コピー</button>
+  </div>
+
+  <dialog id="dictDialog">
+    <form method="dialog" class="dictPanel" id="dictForm">
+      <div class="dictHeader">
+        <strong>単語辞書</strong>
+        <span class="dictHint">端末内に保存。例：たかえ → 貴恵</span>
+        <button value="cancel" class="closeBtn" aria-label="閉じる">×</button>
+      </div>
+      <div class="dictToolbar">
+        <button type="button" id="btnAddDict">＋追加</button>
+        <button type="button" id="btnImportDict">CSV読込</button>
+        <button type="button" id="btnExportDict">CSV出力</button>
+        <input type="file" id="dictFile" accept=".csv,text/csv" hidden>
+        <span class="spacer"></span>
+        <button type="button" id="btnSaveDict" class="primary">保存</button>
+      </div>
+      <div class="dictTableWrap">
+        <table class="dictTable">
+          <thead><tr><th>よみがな</th><th>表記</th><th></th></tr></thead>
+          <tbody id="dictBody"></tbody>
+        </table>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="./assets/app.js"></script>
+</body>
+</html>
